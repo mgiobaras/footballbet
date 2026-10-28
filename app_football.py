@@ -20,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-ITERATIONS = 500_000  
+ITERATIONS = 100_000  
 HISTORY_FILE = "football_predictions_history.csv"
 MIN_ODDS = 1.60
 MAX_ODDS = 3.50
