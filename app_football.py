@@ -13,8 +13,14 @@ from datetime import datetime, timedelta
 # STREAMLIT SHARP FOOTBALL MONTE CARLO WEB APP (FIXED JSON & UI)
 # ============================================================
 
-st.set_page_config()
-    st.markdown(
+st.set_page_config(
+    page_title="Sharp Football Value & Profit Predictor",
+    page_icon="⚽",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.markdown(
     """
     <head>
         <link rel="icon" href="icon.png">
@@ -23,12 +29,6 @@ st.set_page_config()
     """,
     unsafe_allow_html=True
 )
-
-
-# --- STREAMLIT UI ---
-st.title("⚽💵 Sharp Football Monte Carlo & Value Bets")
-st.markdown("Προσομοιώσεις Poisson, ανάλυση απόδοσης, Value Bets με κριτήριο Kelly και παρακολούθηση μπάνκας.")
-
 ITERATIONS = 100_000  
 HISTORY_FILE = "football_predictions_history.csv"
 MIN_ODDS = 1.60
