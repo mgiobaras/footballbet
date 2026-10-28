@@ -14,10 +14,15 @@ from datetime import datetime, timedelta
 # ============================================================
 
 st.set_page_config(
-    page_title="Football Value & Profit Predictor",
-    page_icon="⚽",  # Εικονίδιο καρτέλας
-    layout="wide",
-    initial_sidebar_state="expanded"
+    st.markdown(
+    """
+    <head>
+        <link rel="icon" href="icon.png">
+        <link rel="apple-touch-icon" href="icon.png">
+    </head>
+    """,
+    unsafe_allow_html=True
+)
 )
 
 # --- STREAMLIT UI ---
