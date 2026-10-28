@@ -1,15 +1,5 @@
 import streamlit as st
 import requests
-import numpy as np
-import unicodedata
-import re
-import difflib
-from datetime import datetime, timedelta
-import json
-import os
-
-# ============================================================
-# STREAMLIT SHARP FOOTBALL MONTE CARLO WEB APP
 # ============================================================
 
 st.set_page_config(
