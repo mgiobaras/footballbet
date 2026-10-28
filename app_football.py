@@ -94,6 +94,7 @@ def team_matches(input_name, api_name):
     if len(a) >= 3 and (a in b or b in a): return True
     return difflib.SequenceMatcher(None, a, b).ratio() >= 0.70
 
+@st.cache_data(ttl=3600)
 def get_matches_for_date(league_code, target_date):
     date_str = target_date.strftime("%Y%m%d")
     codes_to_try = [league_code]
