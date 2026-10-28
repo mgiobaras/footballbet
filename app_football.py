@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 # STREAMLIT SHARP FOOTBALL MONTE CARLO WEB APP (FIXED JSON & UI)
 # ============================================================
 
-st.set_page_config(
+st.set_page_config()
     st.markdown(
     """
     <head>
@@ -23,7 +23,7 @@ st.set_page_config(
     """,
     unsafe_allow_html=True
 )
-)
+
 
 # --- STREAMLIT UI ---
 st.title("⚽💵 Sharp Football Monte Carlo & Value Bets")
