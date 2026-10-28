@@ -14,11 +14,15 @@ from datetime import datetime, timedelta
 # ============================================================
 
 st.set_page_config(
-    page_title="Sharp Football Monte Carlo Predictor",
-    page_icon="⚽",
+    page_title="Football Value & Profit Predictor",
+    page_icon="⚽",  # Εικονίδιο καρτέλας
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# --- STREAMLIT UI ---
+st.title("⚽💵 Sharp Football Monte Carlo & Value Bets")
+st.markdown("Προσομοιώσεις Poisson, ανάλυση απόδοσης, Value Bets με κριτήριο Kelly και παρακολούθηση μπάνκας.")
 
 ITERATIONS = 100_000  
 HISTORY_FILE = "football_predictions_history.csv"
