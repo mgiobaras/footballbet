@@ -30,7 +30,7 @@ KELLY_FRACTION = 0.25
 MAX_STAKE_PERCENT = 2.0  
 MAX_DEVIATION_PCT = 15.0 
 LAST_GAMES = 8  
-SEARCH_DAYS = 180  
+SEARCH_DAYS = 90  
 
 LEAGUES = {
     "Ελλάδα - Super League": {"code": "gre.1", "cutoff": datetime(2026, 7, 1).date()},
