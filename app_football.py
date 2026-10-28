@@ -6,7 +6,11 @@ import re
 import difflib
 import csv
 import os
+import json
 from datetime import datetime, timedelta
+
+# ============================================================
+# STREAMLIT SHARP FOOTBALL MONTE CARLO WEB APP (FIXED JSON & UI)
 # ============================================================
 
 st.set_page_config(
@@ -16,9 +20,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-ITERATIONS = 500_000  # Meiwsh se 500k gia grhgori apodosi sto cloud (mpori na ginei kai 1.000.000)
-LAST_GAMES = 8  
-SEARCH_DAYS = 180  
+ITERATIONS = 500_000  
+HISTORY_FILE = "football_predictions_history.csv"
 MIN_ODDS = 1.60
 MAX_ODDS = 3.50
 MIN_EV = 3.0  
@@ -26,8 +29,8 @@ MIN_PROB_TO_SAVE = 60.0
 KELLY_FRACTION = 0.25  
 MAX_STAKE_PERCENT = 2.0  
 MAX_DEVIATION_PCT = 15.0 
-
-HISTORY_FILE = "bets_history.json"
+LAST_GAMES = 8  
+SEARCH_DAYS = 180  
 
 LEAGUES = {
     "Ελλάδα - Super League": {"code": "gre.1", "cutoff": datetime(2026, 7, 1).date()},
@@ -64,22 +67,6 @@ session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0 Safari/537.36",
     "Accept": "application/json"
 })
-
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
-
-def save_history(history):
-    try:
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        st.error(f"[!] Σφάλμα αποθήκευσης ιστορικού: {e}")
 
 def normalize(text):
     if text is None: return ""
@@ -195,9 +182,36 @@ def find_team_stats(league_info, team_name, target_date=None):
 
     return {"name": official_name, "avg_gf": avg_gf, "avg_ga": avg_ga, "rest_days": rest_days, "sample_size": played}
 
+def save_prediction(row):
+    fields = ["created_at", "date", "league_code", "home_team", "away_team", "market", "odds", "prob", "ev", "stake_units", "status", "home_score", "away_score"]
+    exists = os.path.exists(HISTORY_FILE)
+    try:
+        with open(HISTORY_FILE, "a", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
+            if not exists: writer.writeheader()
+            writer.writerow({key: row.get(key, "") for key in fields})
+    except Exception as e:
+        st.error(f"[!] Σφάλμα αποθήκευσης ιστορικού: {e}")
+
+def evaluate_bet_win(b):
+    try:
+        hs = int(b["home_score"])
+        as_ = int(b["away_score"])
+    except Exception:
+        return False
+    market = b["market"]
+    if market == "Νίκη Γηπεδούχου (1)": return hs > as_
+    elif market == "Ισοπαλία (X)": return hs == as_
+    elif market == "Νίκη Φιλοξενουμένου (2)": return hs < as_
+    elif market == "Over 1.5": return (hs + as_) > 1.5
+    elif market == "Over 2.5": return (hs + as_) > 2.5
+    elif market == "Over 3.5": return (hs + as_) > 3.5
+    elif market == "Goal/Goal (GG)": return hs > 0 and as_ > 0
+    return False
+
 # --- STREAMLIT UI ---
 st.title("⚽ Sharp Football Monte Carlo Predictor")
-st.markdown("Προσομοιώσεις Poisson Monte Carlo για ποδοσφαιρικούς αγώνες, ανάλυση Value Bets και διαχείριση ιστορικού.")
+st.markdown("Προσομοιώσεις Poisson Monte Carlo για ποδοσφαιρικούς αγώνες, επιλογή Value Bets με checkboxes και παρακολούθηση ROI/Μπάνκας.")
 
 # Sidebar settings
 st.sidebar.header("⚙️ Ρυθμίσεις & Επιλογή Αγώνα")
@@ -207,7 +221,10 @@ league = LEAGUES[league_name]
 target_date = st.sidebar.date_input("Ημερομηνία Αγώνα", datetime.now().date())
 target_date_str = target_date.strftime("%Y-%m-%d")
 
-# Ανάκτηση αγώνων
+if "prev_league_f" not in st.session_state or st.session_state["prev_league_f"] != league_name:
+    st.session_state["prev_league_f"] = league_name
+    if "last_sim_data_f" in st.session_state: del st.session_state["last_sim_data_f"]
+
 matches = get_matches_for_date(league["code"], target_date)
 match_options = [f"{m['home']} vs {m['away']}" for m in matches] if matches else []
 match_options.append("➕ Χειροκίνητη Εισαγωγή Ομάδων")
@@ -223,7 +240,8 @@ else:
     home_name = st.sidebar.text_input("Γηπεδούχος Ομάδα", "Olympiacos")
     away_name = st.sidebar.text_input("Φιλοξενούμενη Ομάδα", "Panathinaikos")
 
-if st.sidebar.button("🔄 Ανάκτηση Στατιστικών Ομάδων"):
+if st.sidebar.button("🔄 Καθαρισμός / Ανανέωση"):
+    if "last_sim_data_f" in st.session_state: del st.session_state["last_sim_data_f"]
     st.rerun()
 
 if home_name and away_name:
@@ -248,44 +266,54 @@ if home_name and away_name:
         'gg': st.sidebar.number_input("Goal/Goal (GG)", value=1.85, min_value=1.01, step=0.01),
     }
 
-    if st.button("🚀 Εκτέλεση Προσομοίωσης Poisson"):
-        with st.spinner(f"Εκτέλεση {ITERATIONS:,} προσομοιώσεων... Παρακαλώ περιμένετε."):
-            home_rest_mult = 0.95 if home_stats["rest_days"] < 4 else (1.03 if home_stats["rest_days"] >= 7 else 1.0)
-            away_rest_mult = 0.93 if away_stats["rest_days"] < 4 else (1.03 if away_stats["rest_days"] >= 7 else 1.0)
+    if st.button("🚀 Εκτέλεση Προσομοίωσης Poisson") or st.session_state.get("sim_run_f", False):
+        st.session_state["sim_run_f"] = True
+        
+        if "last_sim_data_f" not in st.session_state:
+            with st.spinner(f"Εκτέλεση {ITERATIONS:,} προσομοιώσεων... Παρακαλώ περιμένετε."):
+                home_rest_mult = 0.95 if home_stats["rest_days"] < 4 else (1.03 if home_stats["rest_days"] >= 7 else 1.0)
+                away_rest_mult = 0.93 if away_stats["rest_days"] < 4 else (1.03 if away_stats["rest_days"] >= 7 else 1.0)
 
-            lam_home = max(((home_stats["avg_gf"] + away_stats["avg_ga"]) / 2) * 1.10 * home_rest_mult, 0.05)
-            lam_away = max(((away_stats["avg_gf"] + home_stats["avg_ga"]) / 2) * 0.95 * away_rest_mult, 0.05)
+                lam_home = max(((home_stats["avg_gf"] + away_stats["avg_ga"]) / 2) * 1.10 * home_rest_mult, 0.05)
+                lam_away = max(((away_stats["avg_gf"] + home_stats["avg_ga"]) / 2) * 0.95 * away_rest_mult, 0.05)
 
-            np.random.seed(42)
-            hg = np.random.poisson(lam_home, ITERATIONS)
-            ag = np.random.poisson(lam_away, ITERATIONS)
+                np.random.seed(42)
+                hg = np.random.poisson(lam_home, ITERATIONS)
+                ag = np.random.poisson(lam_away, ITERATIONS)
 
-            p_home = np.mean(hg > ag) * 100
-            p_draw = np.mean(hg == ag) * 100
-            p_away = np.mean(ag > hg) * 100
+                p_home = np.mean(hg > ag) * 100
+                p_draw = np.mean(hg == ag) * 100
+                p_away = np.mean(ag > hg) * 100
 
-            p_btts = np.mean((hg > 0) & (ag > 0)) * 100
-            p_over15 = np.mean((hg + ag) > 1.5) * 100
-            p_over25 = np.mean((hg + ag) > 2.5) * 100
-            p_over35 = np.mean((hg + ag) > 3.5) * 100
+                p_btts = np.mean((hg > 0) & (ag > 0)) * 100
+                p_over15 = np.mean((hg + ag) > 1.5) * 100
+                p_over25 = np.mean((hg + ag) > 2.5) * 100
+                p_over35 = np.mean((hg + ag) > 3.5) * 100
+
+                st.session_state["last_sim_data_f"] = {
+                    "p_home": p_home, "p_draw": p_draw, "p_away": p_away,
+                    "p_btts": p_btts, "p_over15": p_over15, "p_over25": p_over25, "p_over35": p_over35
+                }
+
+        sim = st.session_state["last_sim_data_f"]
 
         st.success("Η προσομοίωση ολοκληρώθηκε!")
 
         col1, col2, col3 = st.columns(3)
-        col1.metric(f"Νίκη {home_stats['name']} (1)", f"{p_home:.1f}%")
-        col2.metric("Ισοπαλία (X)", f"{p_draw:.1f}%")
-        col3.metric(f"Νίκη {away_stats['name']} (2)", f"{p_away:.1f}%")
+        col1.metric(f"Νίκη {home_stats['name']} (1)", f"{sim['p_home']:.1f}%")
+        col2.metric("Ισοπαλία (X)", f"{sim['p_draw']:.1f}%")
+        col3.metric(f"Νίκη {away_stats['name']} (2)", f"{sim['p_away']:.1f}%")
 
         st.markdown("---")
         st.subheader("📊 Πιθανότητες Γκολ & Goal/Goal")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Over 1.5", f"{p_over15:.1f}%")
-        c2.metric("Over 2.5", f"{p_over25:.1f}%")
-        c3.metric("Over 3.5", f"{p_over35:.1f}%")
-        c4.metric("Goal/Goal", f"{p_btts:.1f}%")
+        c1.metric("Over 1.5", f"{sim['p_over15']:.1f}%")
+        c2.metric("Over 2.5", f"{sim['p_over25']:.1f}%")
+        c3.metric("Over 3.5", f"{sim['p_over35']:.1f}%")
+        c4.metric("Goal/Goal", f"{sim['p_btts']:.1f}%")
 
         st.markdown("---")
-        st.subheader("💡 Έλεγχος Value Bets & Expected Value")
+        st.subheader("💡 Επιλογή Value Bets & Αποθήκευση στο Ιστορικό")
 
         raw_odds_1x2 = [odds.get('1'), odds.get('X'), odds.get('2')]
         fair_probs_1x2 = [None, None, None]
@@ -295,22 +323,19 @@ if home_name and away_name:
             fair_probs_1x2 = [(p / total_prob) * 100 for p in implied_probs]
 
         markets = [
-            ("Νίκη Γηπεδούχου (1)", p_home, odds.get('1'), fair_probs_1x2[0]),
-            ("Ισοπαλία (X)", p_draw, odds.get('X'), fair_probs_1x2[1]),
-            ("Νίκη Φιλοξενουμένου (2)", p_away, odds.get('2'), fair_probs_1x2[2]),
-            ("Over 1.5", p_over15, odds.get('over15'), None),
-            ("Over 2.5", p_over25, odds.get('over25'), None),
-            ("Over 3.5", p_over35, odds.get('over35'), None),
-            ("Goal/Goal (GG)", p_btts, odds.get('gg'), None)
+            ("Νίκη Γηπεδούχου (1)", sim['p_home'], odds.get('1'), fair_probs_1x2[0]),
+            ("Ισοπαλία (X)", sim['p_draw'], odds.get('X'), fair_probs_1x2[1]),
+            ("Νίκη Φιλοξενουμένου (2)", sim['p_away'], odds.get('2'), fair_probs_1x2[2]),
+            ("Over 1.5", sim['p_over15'], odds.get('over15'), None),
+            ("Over 2.5", sim['p_over25'], odds.get('over25'), None),
+            ("Over 3.5", sim['p_over35'], odds.get('over35'), None),
+            ("Goal/Goal (GG)", sim['p_btts'], odds.get('gg'), None)
         ]
 
-        history = load_history()
-        found_value = False
-
+        valid_value_bets = []
         for market, prob, odd, fair_prob in markets:
             if odd is not None and MIN_ODDS <= odd <= MAX_ODDS and 0 < prob < 100:
                 if fair_prob is not None and abs(prob - fair_prob) > MAX_DEVIATION_PCT:
-                    st.info(f"❌ Απόρριψη **{market}**: Υπερβολική απόκλιση από αγορά (Model: {prob:.1f}% vs Fair Market: {fair_prob:.1f}%)")
                     continue
 
                 val = ((prob / 100) * odd - 1) * 100
@@ -321,35 +346,159 @@ if home_name and away_name:
                 kelly_stake = min(max(kelly_full * KELLY_FRACTION * 100, 0), MAX_STAKE_PERCENT)
 
                 if val >= MIN_EV:
-                    found_value = True
-                    st.success(f"🔥 **{market}** | Απόδοση: `{odd:.2f}` | Πιθανότητα: `{prob:.1f}%` | **EV: +{val:.2f}%** | Stake: `{kelly_stake:.2f}%`")
+                    valid_value_bets.append({
+                        "market": market, "prob": prob, "odd": odd, "ev": val, "stake": kelly_stake
+                    })
+
+        if valid_value_bets:
+            st.write("Επιλέξτε ποια από τα παρακάτω Value Bets θέλετε να προσθέσετε στο ιστορικό σας:")
+            
+            selected_bets_to_save = []
+            for i, vb in enumerate(valid_value_bets):
+                label = f"🔥 {vb['market']} | Απόδοση: {vb['odd']:.2f} | Πιθανότητα: {vb['prob']:.1f}% | EV: +{vb['ev']:.2f}% | Stake: {vb['stake']:.1f}%"
+                is_checked = st.checkbox(label, value=True, key=f"f_chk_{i}")
+                if is_checked:
+                    selected_bets_to_save.append(vb)
+
+            if st.button("💾 Αποθήκευση Επιλεγμένων στο Ιστορικό", key="f_save_btn"):
+                if selected_bets_to_save:
+                    saved_count = 0
+                    for vb in selected_bets_to_save:
+                        bet_entry = {
+                            "created_at": datetime.now().isoformat(),
+                            "date": target_date_str, 
+                            "league_code": league["code"],
+                            "home_team": home_stats['name'], 
+                            "away_team": away_stats['name'],
+                            "market": vb["market"], 
+                            "odds": vb["odd"], 
+                            "prob": vb["prob"], 
+                            "ev": vb["ev"],
+                            "stake_units": vb["stake"], 
+                            "status": "pending", 
+                            "home_score": None, 
+                            "away_score": None
+                        }
+                        save_prediction(bet_entry)
+                        saved_count += 1
                     
-                    if prob >= MIN_PROB_TO_SAVE:
-                        exists = any(b["home_team"] == home_stats['name'] and b["away_team"] == away_stats['name'] and b["market"] == market and b["date"] == target_date_str for b in history)
-                        if not exists:
-                            history.append({
-                                "date": target_date_str, "league_code": league["code"],
-                                "home_team": home_stats['name'], "away_team": away_stats['name'],
-                                "market": market, "odds": odd, "prob": prob, "ev": val,
-                                "stake_units": kelly_stake, "status": "pending", "home_score": None, "away_score": None
-                            })
-                            save_history(history)
+                    st.success(f"Αποθηκεύτηκαν επιτυχώς {saved_count} επιλογές στο ιστορικό!")
+                    if "last_sim_data_f" in st.session_state:
+                        del st.session_state["last_sim_data_f"]
+                    st.rerun()
                 else:
-                    st.write(f"• {market} | Απόδοση: `{odd:.2f}` | Πιθανότητα: `{prob:.1f}%` | EV: `{val:+.2f}%` (Χωρίς Value)")
+                    st.warning("Δεν έχετε επιλέξει καμία πρόταση προς αποθήκευση.")
+        else:
+            st.info("Δεν βρέθηκαν Value Bets που να ξεπερνούν τα κριτήρια απόδοσης/EV.")
 
-        if not found_value:
-            st.warning("⚠️ Καμία επιλογή δεν πέρασε τα φίλτρα απόδοσης/EV.")
-
-# --- ΙΣΤΟΡΙΚΟ & ΣΤΑΤΙΣΤΙΚΑ ---
+# --- ΙΣΤΟΡΙΚΟ, ROI & ΜΠΑΝΚΑΣ ΠΟΔΟΣΦΑΙΡΟΥ ---
 st.markdown("---")
-st.subheader("📂 Ιστορικό & Στατιστικά Στοιχιμάτων")
-history = load_history()
-if history:
-    st.write(f"Συνολικά αποθηκευμένες προτάσεις: **{len(history)}**")
-    settled = [b for b in history if b["status"] in ["won", "lost"]]
-    if settled:
-        wins = len([b for b in settled if b["status"] == "won"])
-        win_rate = (wins / len(settled)) * 100
-        st.metric("Συνολική Επιτυχία Ολοκληρωμένων", f"{win_rate:.1f}%", f"{wins} / {len(settled)} κερδισμένα")
+st.subheader("📂 Ιστορικό, ROI & Παρακολούθηση Μπάνκας (Ποδόσφαιρο)")
+
+if os.path.exists(HISTORY_FILE):
+    history = []
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            history = list(reader)
+    except Exception:
+        history = []
+
+    if history:
+        st.write(f"Συνολικά αποθηκευμένες προτάσεις: **{len(history)}**")
+        
+        pending_history = [b for b in history if b.get("status") == "pending" or b.get("home_score") in [None, ""]]
+        
+        if pending_history:
+            with st.expander("📝 Εισαγωγή Τελικών Σκόρ για Εκκρεμή Στοιχήματα"):
+                for idx, b in enumerate(pending_history):
+                    st.write(f"⚽ **{b.get('date')}** | {b.get('home_team')} vs {b.get('away_team')} | Επιλογή: `{b.get('market')}`")
+                    col_h, col_a, col_btn = st.columns([2, 2, 2])
+                    
+                    hs = col_h.number_input(f"Γκολ {b.get('home_team')}", min_value=0, value=0, key=f"fh_{idx}")
+                    as_ = col_a.number_input(f"Γκολ {b.get('away_team')}", min_value=0, value=0, key=f"fa_{idx}")
+                    
+                    if col_btn.button("💾 Αποθήκευση Σκόρ", key=f"fbtn_{idx}"):
+                        for orig_b in history:
+                            if orig_b.get("date") == b.get("date") and orig_b.get("home_team") == b.get("home_team") and orig_b.get("away_team") == b.get("away_team") and orig_b.get("market") == b.get("market"):
+                                orig_b["home_score"] = int(hs)
+                                orig_b["away_score"] = int(as_)
+                                market = orig_b["market"]
+                                won = False
+                                if market == "Νίκη Γηπεδούχου (1)": won = hs > as_
+                                elif market == "Ισοπαλία (X)": won = hs == as_
+                                elif market == "Νίκη Φιλοξενουμένου (2)": won = hs < as_
+                                elif market == "Over 1.5": won = (hs + as_) > 1.5
+                                elif market == "Over 2.5": won = (hs + as_) > 2.5
+                                elif market == "Over 3.5": won = (hs + as_) > 3.5
+                                elif market == "Goal/Goal (GG)": won = hs > 0 and as_ > 0
+                                orig_b["status"] = "won" if won else "lost"
+                                break
+                        
+                        fields = ["created_at", "date", "league_code", "home_team", "away_team", "market", "odds", "prob", "ev", "stake_units", "status", "home_score", "away_score"]
+                        with open(HISTORY_FILE, "w", newline="", encoding="utf-8-sig") as f_out:
+                            writer = csv.DictWriter(f_out, fieldnames=fields, extrasaction='ignore')
+                            writer.writeheader()
+                            writer.writerows(history)
+                        
+                        st.success(f"Το σκόρ {hs}-{as_} αποθηκεύτηκε!")
+                        st.rerun()
+
+        settled = [b for b in history if b.get("status") in ["won", "lost"]]
+        
+        if settled:
+            wins = len([b for b in settled if b["status"] == "won"])
+            win_rate = (wins / len(settled)) * 100
+            
+            total_staked = 0.0
+            total_return = 0.0
+            
+            for b in settled:
+                try: stake = float(b.get("stake_units", 1.0))
+                except ValueError: stake = 1.0
+                try: odds_val = float(b.get("odds", 1.90))
+                except ValueError: odds_val = 1.90
+                
+                total_staked += stake
+                if b["status"] == "won":
+                    total_return += stake * odds_val
+                    
+            net_profit = total_return - total_staked
+            roi = (net_profit / total_staked) * 100 if total_staked > 0 else 0.0
+            
+            st.markdown("### 📊 Συνολικά Στατιστικά & Μπάνκα Ποδοσφαίρου")
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            col_m1.metric("Ποσοστό Επιτυχίας", f"{win_rate:.1f}%", f"{wins} / {len(settled)}")
+            col_m2.metric("Καθάρο Κέρδος/Ζημιά", f"{net_profit:+.2f} μ.")
+            col_m3.metric("ROI (%)", f"{roi:+.2f}%")
+            col_m4.metric("Συνολικό Ποντάρισμα", f"{total_staked:.2f} μ.")
+            
+            display_data = []
+            for b in settled:
+                is_won = (b["status"] == "won")
+                try: stake_val = float(b.get("stake_units", 1.0))
+                except ValueError: stake_val = 1.0
+                try: odd_val = float(b.get("odds", 1.90))
+                except ValueError: odd_val = 1.90
+                
+                profit_loss = (stake_val * odd_val - stake_val) if is_won else (-stake_val)
+                bet_roi = (profit_loss / stake_val) * 100 if stake_val > 0 else 0.0
+                
+                display_data.append({
+                    "Ημερομηνία": b.get("date", ""),
+                    "Αγώνας": f"{b.get('home_team')} - {b.get('away_team')}",
+                    "Επιλογή": b.get("market", ""),
+                    "Απόδοση": f"{odd_val:.2f}",
+                    "Σκόρ": f"{b.get('home_score')}-{b.get('away_score')}",
+                    "Κατάσταση": "🟢 ΚΕΡΔΟΣ" if is_won else "🔴 ΧΑΜΕΝΟ",
+                    "Κέρδος/Ζημιά": f"{profit_loss:+.2f} μ.",
+                    "ROI (%)": f"{bet_roi:+.1f}%"
+                })
+            
+            st.dataframe(display_data, use_container_width=True)
+        else:
+            st.info("Δεν υπάρχουν ακόμα ολοκληρωμένα στοιχήματα ποδοσφαίρου με καταχωρημένο σκόρ.")
+    else:
+        st.info("Δεν υπάρχουν ακόμη αποθηκευμένες προτάσεις στο ιστορικό ποδοσφαίρου.")
 else:
-    st.info("Δεν υπάρχουν ακόμη αποθηκευμένες προτάσεις στο ιστορικό.")
+    st.info("Το αρχείο ιστορικού ποδοσφαίρου θα δημιουργηθεί αυτόματα με την πρώτη αποθήκευση πρότασης.")
